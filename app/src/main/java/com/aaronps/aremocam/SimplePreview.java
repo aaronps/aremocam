@@ -18,7 +18,9 @@ import java.util.List;
  * Created by krom on 12/11/16.
  */
 
-public final class SimplePreview extends SurfaceView implements SurfaceHolder.Callback {
+public final class SimplePreview
+        extends SurfaceView
+        implements SurfaceHolder.Callback, Camera.PreviewCallback {
     private static final String TAG = "SimplePreview";
 
     private final int           mCameraIndex;
@@ -37,6 +39,9 @@ public final class SimplePreview extends SurfaceView implements SurfaceHolder.Ca
 
     private PreviewState mPreviewState        = PREVIEW_OFF;
     private PreviewState mDesiredPreviewState = PREVIEW_OFF;
+
+    // @note @optimization This keep separated because it might change every frame and we don't want to renew it
+    private volatile Camera.PreviewCallback mPreviewCallback;
 
 
     public SimplePreview(int cameraIndex, Context context) {
@@ -98,10 +103,10 @@ public final class SimplePreview extends SurfaceView implements SurfaceHolder.Ca
         return false;
     }
 
-    public boolean start(final int width, final int height, Camera.PreviewCallback previewCallback) {
+    public boolean start(final int width, final int height) {
         if (acquire())
         {
-            mDesiredPreviewState = new PreviewState(true, width, height, previewCallback);
+            mDesiredPreviewState = new PreviewState(true, width, height, null);
 
             if (mHasSurface)
             {
@@ -206,7 +211,7 @@ public final class SimplePreview extends SurfaceView implements SurfaceHolder.Ca
             try
             {
                 mCamera.setPreviewDisplay(mSurfaceHolder);
-                mCamera.setPreviewCallback(mDesiredPreviewState.previewCallback);
+                mCamera.setPreviewCallback(this);
                 mCamera.startPreview();
                 mPreviewState = mDesiredPreviewState;
                 return true;
@@ -216,32 +221,6 @@ public final class SimplePreview extends SurfaceView implements SurfaceHolder.Ca
                 Log.d(TAG, "Error starting thew preview", ex);
             }
         }
-
-//            if ( mCaptureState.isCapturing )
-//            {
-//                if ( mCaptureState.width != options.mDesiredWidth || mCaptureState.height != options.mDesiredHeight )
-//                {
-//                    try { mCamera.stopPreview(); } catch (Exception e) { }
-//                    mCaptureState = new CaptureState();
-//                }
-//                else
-//                {
-//                    // nothing to do, it is the same, maybe notify...
-//                    return true;
-//                }
-//            }
-
-//        try
-//        {
-//            mCamera.setPreviewDisplay(mSurfaceHolder);
-
-//            final Camera.Parameters parameters = mCamera.getParameters();
-
-////            parameters.setPreviewSize(768, 432);
-//            Camera.Size size = mPreviewSizes.get(mSelectedPreviewSize);
-//            parameters.setPreviewSize(size.width, size.height);
-//
-//            mCamera.setParameters(parameters);
 
 //            final WindowManager wm       = (WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE);
 //            final int           rotation = wm.getDefaultDisplay().getRotation();
@@ -282,28 +261,22 @@ public final class SimplePreview extends SurfaceView implements SurfaceHolder.Ca
 //            Log.d(TAG, "Result orientx = " + result);
 //            mCamera.setDisplayOrientation(result);
 
-//                mCamera.setPreviewCallback(this);
-
-//            mCamera.startPreview();
-//            mPreviewState = new PreviewState(true, size.width, size.height);
-//
-//            return true;
-//        }
-//        catch (IOException e)
-//        {
-//            Log.d(TAG, "Error starting preview", e);
-//        }
-//        }
-//        else
-//        {
-//            // shall stop video.
-//            if ( mCaptureState.isCapturing )
-//            {
-//                try { mCamera.stopPreview(); } catch (Exception e) { }
-//                mCaptureState = new CaptureState();
-//            }
-//        }
         return false;
+    }
+
+    @Override
+    public void onPreviewFrame(byte[] bytes, Camera camera) {
+        final Camera.PreviewCallback callback = mPreviewCallback;
+        if ( callback != null )
+        {
+            mPreviewCallback = null;
+            callback.onPreviewFrame(bytes, camera);
+        }
+
+    }
+
+    public void setPreviewCallbackOnce(Camera.PreviewCallback previewCallback) {
+        mPreviewCallback = previewCallback;
     }
 
 }

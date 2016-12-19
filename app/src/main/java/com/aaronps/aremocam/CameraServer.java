@@ -20,7 +20,7 @@ import java.nio.channels.ServerSocketChannel;
  * Created by krom on 12/15/16.
  */
 
-public class CameraServer implements Runnable, Camera.PreviewCallback {
+public class CameraServer implements Runnable {
     private static final String TAG             = "CameraServer";
     private static final long   LOOP_RESTART_MS = 5000;
 
@@ -117,7 +117,6 @@ public class CameraServer implements Runnable, Camera.PreviewCallback {
             Camera.PreviewCallback previewCallback = new Camera.PreviewCallback(){
                 @Override
                 public void onPreviewFrame(byte[] bytes, Camera camera) {
-
                     final ByteBuffer head = ByteBuffer.wrap(("Pic " + bytes.length + "\n").getBytes());
                     final ByteBuffer pic  = ByteBuffer.wrap(bytes);
 
@@ -160,7 +159,7 @@ public class CameraServer implements Runnable, Camera.PreviewCallback {
 
                     Log.d(TAG, "Requested BeginVideo size " + vsize);
 
-                    if (mSimplePreview.start(width, height, previewCallback))
+                    if (mSimplePreview.start(width, height))
                     {
                         StringBuilder sb = new StringBuilder(128);
                         sb.append("Ready ")
@@ -179,6 +178,7 @@ public class CameraServer implements Runnable, Camera.PreviewCallback {
                 }
                 else if (command.equals("Pic"))
                 {
+                    mSimplePreview.setPreviewCallbackOnce(previewCallback);
 //                    Log.d(TAG, "Requested Pic");
                 }
             }
@@ -190,8 +190,4 @@ public class CameraServer implements Runnable, Camera.PreviewCallback {
         }
     }
 
-    @Override
-    public void onPreviewFrame(byte[] bytes, Camera camera) {
-
-    }
 }
