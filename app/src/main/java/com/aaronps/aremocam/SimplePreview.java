@@ -10,6 +10,7 @@ import android.view.SurfaceView;
 import android.view.WindowManager;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * @todo use Looper and Handler .... But this makes it AndroidOnly
@@ -17,7 +18,7 @@ import java.io.IOException;
  * Created by krom on 12/11/16.
  */
 
-public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback {
+public final class SimplePreview extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "SimplePreview";
 
     private final int           mCameraIndex;
@@ -26,7 +27,17 @@ public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback
 
     private volatile boolean mHasSurface = false;
 
-    private Camera mCamera;
+    public Camera            mCamera;
+    public List<Camera.Size> mPreviewSizes;
+
+    private int               mSelectedPreviewSize = 0;
+    private Camera.CameraInfo mCameraInfo          = new Camera.CameraInfo();
+
+    private static final PreviewState PREVIEW_OFF = new PreviewState();
+
+    private PreviewState mPreviewState        = PREVIEW_OFF;
+    private PreviewState mDesiredPreviewState = PREVIEW_OFF;
+
 
     public SimplePreview(int cameraIndex, Context context) {
         super(context);
@@ -37,36 +48,87 @@ public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback
         mSurfaceHolder.addCallback(this);
     }
 
-    public final void start() {
+    public boolean acquire() {
         if (mCamera == null)
         {
             try
             {
                 mCamera = Camera.open(mCameraIndex);
+
+                final Camera.Parameters parameters = mCamera.getParameters();
+                mPreviewSizes = parameters.getSupportedPreviewSizes();
+
+                Camera.getCameraInfo(mCameraIndex, mCameraInfo);
             }
-            catch (Exception e)
+            catch (RuntimeException e)
             {
                 Log.d(TAG, "Unable to acquire camera", e);
             }
         }
 
-        // no else
+        return mCamera != null;
+    }
+
+    public void release() {
         if (mCamera != null)
         {
-            if (mHasSurface)
-            {
-                updatePreview();
-            }
+            mCamera.release();
+            mCamera = null;
         }
     }
 
-    public final void stop() {
+    public boolean start() {
+        if (acquire())
+        {
+            if (mDesiredPreviewState.width == 0 || mDesiredPreviewState.height == 0)
+            {
+                Camera.Size sz = mPreviewSizes.get(0);
+                mDesiredPreviewState = new PreviewState(true, sz.width, sz.height, null);
+            }
+            else if (!mDesiredPreviewState.previewing)
+            {
+                mDesiredPreviewState = new PreviewState(true, mDesiredPreviewState.width, mDesiredPreviewState.height, null);
+            }
+
+            if (mHasSurface)
+            {
+                return updatePreview();
+            }
+        }
+        return false;
+    }
+
+    public boolean start(final int width, final int height, Camera.PreviewCallback previewCallback) {
+        if (acquire())
+        {
+            mDesiredPreviewState = new PreviewState(true, width, height, previewCallback);
+
+            if (mHasSurface)
+            {
+                return updatePreview();
+            }
+        }
+        return false;
+    }
+
+    public void stop() {
         if (mCamera != null)
         {
-            final Camera cam = mCamera;
-            mCamera = null;
-            cam.release();
+            mCamera.stopPreview();
         }
+
+        mDesiredPreviewState = mPreviewState = PREVIEW_OFF;
+
+        // @todo decide if release here or not.
+        release();
+    }
+
+    public int getPreviewFormat() {
+        if (mCamera != null)
+        {
+            return mCamera.getParameters().getPreviewFormat();
+        }
+        return -1;
     }
 
     @Override
@@ -102,6 +164,11 @@ public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback
         mHasSurface = false;
     }
 
+
+    /**
+     * @return unknown
+     * @todo discover the meaning of the return value
+     */
     public boolean updatePreview() {
         if (mCamera == null)
         {
@@ -119,6 +186,37 @@ public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback
             return false;
         }
 
+        if (mPreviewState == mDesiredPreviewState)
+        {
+            return mPreviewState.previewing; // what is the meaning of the return value?
+        }
+
+        if (mPreviewState.previewing)
+        {
+            mCamera.stopPreview();
+            mPreviewState = PREVIEW_OFF;
+        }
+
+        if (mDesiredPreviewState.previewing)
+        {
+            final Camera.Parameters parameters = mCamera.getParameters();
+            parameters.setPreviewSize(mDesiredPreviewState.width, mDesiredPreviewState.height);
+            mCamera.setParameters(parameters);
+
+            try
+            {
+                mCamera.setPreviewDisplay(mSurfaceHolder);
+                mCamera.setPreviewCallback(mDesiredPreviewState.previewCallback);
+                mCamera.startPreview();
+                mPreviewState = mDesiredPreviewState;
+                return true;
+            }
+            catch (IOException ex)
+            {
+                Log.d(TAG, "Error starting thew preview", ex);
+            }
+        }
+
 //            if ( mCaptureState.isCapturing )
 //            {
 //                if ( mCaptureState.width != options.mDesiredWidth || mCaptureState.height != options.mDesiredHeight )
@@ -133,71 +231,68 @@ public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback
 //                }
 //            }
 
-        try
-        {
-            mCamera.setPreviewDisplay(mSurfaceHolder);
+//        try
+//        {
+//            mCamera.setPreviewDisplay(mSurfaceHolder);
 
-            final Camera.Parameters parameters = mCamera.getParameters();
-//            for (Camera.Size size : parameters.getSupportedPreviewSizes())
+//            final Camera.Parameters parameters = mCamera.getParameters();
+
+////            parameters.setPreviewSize(768, 432);
+//            Camera.Size size = mPreviewSizes.get(mSelectedPreviewSize);
+//            parameters.setPreviewSize(size.width, size.height);
+//
+//            mCamera.setParameters(parameters);
+
+//            final WindowManager wm       = (WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE);
+//            final int           rotation = wm.getDefaultDisplay().getRotation();
+//
+//            int degrees = 0;
+//            switch (rotation)
 //            {
-//                Log.d(TAG, String.format("Camera format: %dx%d", size.width, size.height));
+//                case Surface.ROTATION_0:
+//                    degrees = 0;
+//                    break;
+//                case Surface.ROTATION_90:
+//                    degrees = 90;
+//                    break;
+//                case Surface.ROTATION_180:
+//                    degrees = 180;
+//                    break;
+//                case Surface.ROTATION_270:
+//                    degrees = 270;
+//                    break;
 //            }
-
-//                final Camera.Parameters parameters = mCamera.getParameters();
-            parameters.setPreviewSize(768, 432);
-
-            mCamera.setParameters(parameters);
-
-            final WindowManager wm       = (WindowManager) mContext.getSystemService(Context.WINDOW_SERVICE);
-            final int           rotation = wm.getDefaultDisplay().getRotation();
-
-            int degrees = 0;
-            switch (rotation)
-            {
-                case Surface.ROTATION_0:
-                    degrees = 0;
-                    break;
-                case Surface.ROTATION_90:
-                    degrees = 90;
-                    break;
-                case Surface.ROTATION_180:
-                    degrees = 180;
-                    break;
-                case Surface.ROTATION_270:
-                    degrees = 270;
-                    break;
-            }
-
-            Camera.CameraInfo ci = new Camera.CameraInfo();
-            Camera.getCameraInfo(mCameraIndex, ci);
-
-            int result;
-            if (ci.facing == Camera.CameraInfo.CAMERA_FACING_FRONT)
-            {
-                // @todo maybe review these orientation changes
-                Log.d(TAG, "Is front, orientation=" + ci.orientation + " degrees=" + degrees);
-                result = Math.abs((ci.orientation - (180 + degrees)) % 360);
-//                result = 90;
-//                result = (ci.orientation + degrees) % 360;
-//                result = (360 - result) % 360;
-            } else
-            {
-                result = (ci.orientation - degrees + 360) % 360;
-            }
-            Log.d(TAG, "Result orientx = " + result);
-            mCamera.setDisplayOrientation(result);
+//
+//            Camera.CameraInfo ci = new Camera.CameraInfo();
+//            Camera.getCameraInfo(mCameraIndex, ci);
+//
+//            int result;
+//            if (ci.facing == Camera.CameraInfo.CAMERA_FACING_FRONT)
+//            {
+//                // @todo maybe review these orientation changes
+//                Log.d(TAG, "Is front, orientation=" + ci.orientation + " degrees=" + degrees);
+//                result = Math.abs((ci.orientation - (180 + degrees)) % 360);
+////                result = 90;
+////                result = (ci.orientation + degrees) % 360;
+////                result = (360 - result) % 360;
+//            } else
+//            {
+//                result = (ci.orientation - degrees + 360) % 360;
+//            }
+//            Log.d(TAG, "Result orientx = " + result);
+//            mCamera.setDisplayOrientation(result);
 
 //                mCamera.setPreviewCallback(this);
 
-            mCamera.startPreview();
-
-//                mCaptureState = new CaptureState(true, options.mDesiredWidth, options.mDesiredHeight);
-            return true;
-        }
-        catch (IOException e)
-        {
-            Log.d(TAG, "Error starting preview", e);
-        }
+//            mCamera.startPreview();
+//            mPreviewState = new PreviewState(true, size.width, size.height);
+//
+//            return true;
+//        }
+//        catch (IOException e)
+//        {
+//            Log.d(TAG, "Error starting preview", e);
+//        }
 //        }
 //        else
 //        {
@@ -210,6 +305,5 @@ public class SimplePreview extends SurfaceView implements SurfaceHolder.Callback
 //        }
         return false;
     }
-
 
 }
