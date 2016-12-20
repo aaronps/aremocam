@@ -60,7 +60,7 @@ public class CameraServer implements Runnable {
                         sschannel = createServer();
                     }
 
-                    commandLoop(new CameraClient(sschannel.accept()));
+                    commandLoop(new CameraClient(sschannel.accept(), mSimplePreview));
                 }
                 catch (InterruptedException ie)
                 {
@@ -114,13 +114,28 @@ public class CameraServer implements Runnable {
     private void commandLoop(final CameraClient cameraClient) {
         try
         {
-            Camera.PreviewCallback previewCallback = new Camera.PreviewCallback(){
+
+            Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+                final StringBuilder sb = new StringBuilder(128);
+                final ByteBuffer bb = ByteBuffer.allocate(128);
+                final byte[] bbarray = bb.array();
+
                 @Override
                 public void onPreviewFrame(byte[] bytes, Camera camera) {
-                    final ByteBuffer head = ByteBuffer.wrap(("Pic " + bytes.length + "\n").getBytes());
+                    sb.setLength(0);
+                    sb.append("Pic ").append(bytes.length).append('\n');
+                    final String headStr = sb.toString(); // @todo could use traction int2string so avoid toString
+                    final int headLen = headStr.length();
+                    headStr.getBytes(0, headLen, bbarray, 0);
+                    bb.position(0);
+                    bb.limit(headLen);
+                    final ByteBuffer head = bb;
+
+                    // @todo an idea for future avoidance of wrapping would be: SimplePreview finds which pre-made ByteBuffer for this byte[]
                     final ByteBuffer pic  = ByteBuffer.wrap(bytes);
 
-                    cameraClient.send(new ByteBuffer[]{head, pic});
+                    cameraClient.send(head);
+                    cameraClient.send(pic);
                 }
             };
 
@@ -147,7 +162,7 @@ public class CameraServer implements Runnable {
 
                     sb.append('\n');
 
-                    cameraClient.send(new ByteBuffer[]{ByteBuffer.wrap(sb.toString().getBytes())});
+                    cameraClient.send(ByteBuffer.wrap(sb.toString().getBytes()));
                     //                cameraClient.send(new byte[][]{sb.toString().getBytes()});
                 }
                 else if (command.startsWith("BeginVideo "))
@@ -168,7 +183,7 @@ public class CameraServer implements Runnable {
                                 .append(mSimplePreview.getPreviewFormat())
                                 .append('\n');
 
-                        cameraClient.send(new ByteBuffer[]{ByteBuffer.wrap(sb.toString().getBytes())});
+                        cameraClient.send(ByteBuffer.wrap(sb.toString().getBytes()));
                     }
                 }
                 else if (command.equals("StopVideo"))

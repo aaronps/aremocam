@@ -20,7 +20,7 @@ import java.util.List;
 
 public final class SimplePreview
         extends SurfaceView
-        implements SurfaceHolder.Callback, Camera.PreviewCallback {
+        implements SurfaceHolder.Callback, Camera.PreviewCallback, BufferManager {
     private static final String TAG = "SimplePreview";
 
     private final int           mCameraIndex;
@@ -32,7 +32,6 @@ public final class SimplePreview
     public Camera            mCamera;
     public List<Camera.Size> mPreviewSizes;
 
-    private int               mSelectedPreviewSize = 0;
     private Camera.CameraInfo mCameraInfo          = new Camera.CameraInfo();
 
     private static final PreviewState PREVIEW_OFF = new PreviewState();
@@ -42,6 +41,8 @@ public final class SimplePreview
 
     // @note @optimization This keep separated because it might change every frame and we don't want to renew it
     private volatile Camera.PreviewCallback mPreviewCallback;
+
+    private int mPreviewBufferSize = -1;
 
 
     public SimplePreview(int cameraIndex, Context context) {
@@ -77,6 +78,7 @@ public final class SimplePreview
     public void release() {
         if (mCamera != null)
         {
+            Log.d(TAG, "Releasing camera");
             mCamera.release();
             mCamera = null;
         }
@@ -117,13 +119,16 @@ public final class SimplePreview
     }
 
     public void stop() {
+        Log.d(TAG, "Stopping");
         if (mCamera != null)
         {
+            Log.d(TAG, "Stopping for real");
             mCamera.stopPreview();
         }
 
         mDesiredPreviewState = mPreviewState = PREVIEW_OFF;
 
+        // @todo clear the previewBuffers...
         // @todo decide if release here or not.
         release();
     }
@@ -211,8 +216,15 @@ public final class SimplePreview
             try
             {
                 mCamera.setPreviewDisplay(mSurfaceHolder);
-                mCamera.setPreviewCallback(this);
+                mCamera.setPreviewCallbackWithBuffer(this);
                 mCamera.startPreview();
+
+                final int y_size = mDesiredPreviewState.width * mDesiredPreviewState.height;
+                mPreviewBufferSize = y_size + (y_size/2);
+
+                mCamera.addCallbackBuffer(new byte[mPreviewBufferSize]);
+                mCamera.addCallbackBuffer(new byte[mPreviewBufferSize]);
+
                 mPreviewState = mDesiredPreviewState;
                 return true;
             }
@@ -272,6 +284,10 @@ public final class SimplePreview
             mPreviewCallback = null;
             callback.onPreviewFrame(bytes, camera);
         }
+        else
+        {
+            mCamera.addCallbackBuffer(bytes);
+        }
 
     }
 
@@ -279,4 +295,17 @@ public final class SimplePreview
         mPreviewCallback = previewCallback;
     }
 
+    @Override
+    public byte[] get() {
+        return new byte[mPreviewBufferSize];
+    }
+
+    @Override
+    public void release(byte[] buffer) {
+        if ( mCamera != null && buffer.length == mPreviewBufferSize)
+        {
+            // @todo this shall be called in the same thread where the camera started
+            mCamera.addCallbackBuffer(buffer);
+        }
+    }
 }

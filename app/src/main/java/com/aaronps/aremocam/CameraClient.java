@@ -23,16 +23,18 @@ public final class CameraClient implements Runnable, Closeable {
 
     private static final int RECV_BUFFER_SIZE = 128;
 
-    private final Thread mThread;
-    private final SocketChannel                     mSocketChannel;
-    private final LinkedBlockingQueue<ByteBuffer[]> mSendQueue;
-    private final ByteBuffer                        mReceiveBuffer;
+    private final Thread                          mThread;
+    private final SocketChannel                   mSocketChannel;
+    private final LinkedBlockingQueue<ByteBuffer> mSendQueue;
+    private final ByteBuffer                      mReceiveBuffer;
+    private final BufferManager                   mBufferManager;
 
 
-    public CameraClient(final SocketChannel socket) {
+    public CameraClient(final SocketChannel socket, final BufferManager bufferManager) {
         mSendQueue = new LinkedBlockingQueue<>();
         mReceiveBuffer = ByteBuffer.allocate(RECV_BUFFER_SIZE);
         mSocketChannel = socket;
+        mBufferManager = bufferManager;
         mThread = new Thread(this);
     }
 
@@ -41,7 +43,7 @@ public final class CameraClient implements Runnable, Closeable {
     }
 
     public synchronized void close() {
-        if ( mThread.isAlive() )
+        if (mThread.isAlive())
         {
             try
             {
@@ -79,14 +81,9 @@ public final class CameraClient implements Runnable, Closeable {
      * @param data
      * @return
      */
-    public boolean send(final ByteBuffer[] data) {
+    public boolean send(final ByteBuffer data) {
         return mSendQueue.offer(data);
     }
-
-    public boolean send(final ByteBuffer data) {
-        return send(new ByteBuffer[]{data});
-    }
-
 
     @Override
     public void run() {
@@ -97,8 +94,11 @@ public final class CameraClient implements Runnable, Closeable {
         {
             while (!thread.isInterrupted())
             {
+                final ByteBuffer bb = mSendQueue.take();
                 // @question being blocking socket, will it always write everything?
-                mSocketChannel.write(mSendQueue.take());
+                mSocketChannel.write(bb);
+
+                mBufferManager.release(bb.array());
             }
         }
         catch (InterruptedException e)
@@ -129,6 +129,7 @@ public final class CameraClient implements Runnable, Closeable {
         final SocketChannel socketChannel = mSocketChannel;
         final ByteBuffer    receiveBuffer = mReceiveBuffer;
         final byte[]        receiveArray  = receiveBuffer.array();
+        final Charset       utf8          = Charset.forName("UTF-8");
 
         int linePos = 0;
 
@@ -149,13 +150,14 @@ public final class CameraClient implements Runnable, Closeable {
 
                 if (receiveArray[linePos] == 10)
                 {
-                    final String result = new String(receiveArray, 0, linePos, Charset.forName("UTF-8"));
+                    final String result = new String(receiveArray, 0, linePos, utf8);
                     // compact the buffer
 
                     if (receiveBuffer.position() == linePos + 1)
                     {
                         receiveBuffer.clear();
-                    } else
+                    }
+                    else
                     {
                         // position can only be > bpos
                         receiveBuffer.position(linePos + 1);
