@@ -2,18 +2,13 @@ package com.aaronps.aremocam;
 
 import android.util.Log;
 
-import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Created by krom on 12/15/16.
@@ -34,14 +29,12 @@ public final class CameraClient implements Runnable, Closeable {
     public interface Sender {
         ByteBuffer prepareData() throws IOException;
 
-        void afterSend();
+        void afterSend() throws InterruptedException;
     }
 
     private class InternalSender implements Sender {
 
         ByteBuffer mBuffer;
-
-//        InternalSender(){}
 
         public void setData(ByteBuffer buffer) {
             mBuffer = buffer;
@@ -53,8 +46,8 @@ public final class CameraClient implements Runnable, Closeable {
         }
 
         @Override
-        public void afterSend() {
-            mFreeSenders.offer(this);
+        public void afterSend() throws InterruptedException {
+            mFreeSenders.put(this);
         }
     }
 
@@ -69,7 +62,7 @@ public final class CameraClient implements Runnable, Closeable {
 
         for (int n = 0; n < QUEUE_LIMIT; n++)
         {
-            mFreeSenders.offer(new InternalSender());
+            mFreeSenders.add(new InternalSender());
         }
     }
 
@@ -116,14 +109,14 @@ public final class CameraClient implements Runnable, Closeable {
      * @param data
      * @return
      */
-    public boolean send(final ByteBuffer data) throws InterruptedException {
+    public void send(final ByteBuffer data) throws InterruptedException {
         final InternalSender s = mFreeSenders.take();
         s.setData(data);
-        return mSendQueue.offer(s);
+        mSendQueue.put(s);
     }
 
-    public boolean send(final Sender sender) {
-        return mSendQueue.offer(sender);
+    public void send(final Sender sender) throws InterruptedException {
+        mSendQueue.put(sender);
     }
 
     @Override
@@ -153,12 +146,13 @@ public final class CameraClient implements Runnable, Closeable {
         {
             Log.d(TAG, "Thread ends");
             closeSocket();
-//            closeNoThrow(os); // ensure that at some point will fail when reading because its closed
         }
     }
 
     /**
      * Reads a text line from the client socket
+     *
+     * @todo don't read lines as protocol, the "new string" makes garbage, maybe use binary.
      *
      * @return The received line | empty line if closed
      */
@@ -175,7 +169,7 @@ public final class CameraClient implements Runnable, Closeable {
         try
         {
 
-            // reading a line always starts at the beginning
+            // reading a line always starts at the beginning of the buffer
             do
             {
                 if (receiveBuffer.position() == linePos)

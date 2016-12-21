@@ -3,16 +3,12 @@ package com.aaronps.aremocam;
 import android.hardware.Camera;
 import android.util.Log;
 
-import java.io.Closeable;
 import java.io.IOException;
-import java.io.PrintStream;
-import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
 
 /**
  * @todo the client is called CameraClient
@@ -31,7 +27,8 @@ public class CameraServer implements Runnable {
     private final SimplePreview mSimplePreview;
     private final int           mTcpPort;
 
-    interface RunnablePreview extends SimplePreview.PreviewCallback, CameraClient.Sender {}
+    interface PreviewSender extends SimplePreview.PreviewCallback, CameraClient.Sender {
+    }
 
     public CameraServer(SimplePreview simplePreview, int tcp_port) {
         mSimplePreview = simplePreview;
@@ -122,47 +119,58 @@ public class CameraServer implements Runnable {
     private void commandLoop(final CameraClient cameraClient) {
         try
         {
-            RunnablePreview previewCallback = new RunnablePreview(){
-                final ByteBuffer bb = ByteBuffer.allocate(1*1024*1024);
-                final ByteBufferOutputStream bbos = new ByteBufferOutputStream(bb);
+            final ArrayBlockingQueue<PreviewSender> previewSenders = new ArrayBlockingQueue<>(2);
+            for (int n = previewSenders.remainingCapacity(); n > 0; n--)
+                previewSenders.add(
+                        new PreviewSender() {
+                            final ByteBuffer bb = ByteBuffer.allocate(1 * 1024 * 1024);
+                            final ByteBufferOutputStream bbos = new ByteBufferOutputStream(bb);
 
-                byte[] mFrame;
-                int mWidth;
-                int mHeight;
+                            byte[] mFrame;
+                            int mWidth;
+                            int mHeight;
 
-                @Override
-                public void onPreviewFrame(byte[] bytes, int width, int height) {
-                    mFrame = bytes;
-                    mWidth = width;
-                    mHeight = height;
-                    cameraClient.send(this);
-                }
+                            @Override
+                            public void onPreviewFrame(byte[] bytes, int width, int height) {
+                                mFrame = bytes;
+                                mWidth = width;
+                                mHeight = height;
+                                try
+                                {
+                                    cameraClient.send(this);
+                                }
+                                catch (InterruptedException e)
+                                {
+                                    Thread.currentThread().interrupt();
+                                    // didn't send it.
+                                    mSimplePreview.release(mFrame);
+                                }
+                            }
 
-                @Override
-                public ByteBuffer prepareData() throws IOException {
-                    bbos.reset();
-                    try
-                    {
-                        bbos.write(MSG_PIC);
-                        bbos.writeInt(mFrame.length);
-                        bbos.write(10);
-                        bbos.write(mFrame);
-                    }
-                    finally
-                    {
-                        mSimplePreview.release(mFrame);
-                    }
+                            @Override
+                            public ByteBuffer prepareData() throws IOException {
+                                bbos.reset();
+                                try
+                                {
+                                    bbos.write(MSG_PIC);
+                                    bbos.writeInt(mFrame.length);
+                                    bbos.write(10);
+                                    bbos.write(mFrame);
+                                }
+                                finally
+                                {
+                                    mSimplePreview.release(mFrame);
+                                }
 
-                    bb.flip();
-                    return bb;
-                }
+                                bb.flip();
+                                return bb;
+                            }
 
-                @Override
-                public void afterSend() {
-                    // maybe queue myself somewhere
-//                    mSimplePreview.release(mFrame);
-                }
-            };
+                            @Override
+                            public void afterSend() throws InterruptedException {
+                                previewSenders.put(this);
+                            }
+                        });
 
             cameraClient.start();
             while (true)
@@ -188,7 +196,6 @@ public class CameraServer implements Runnable {
                     sb.append('\n');
 
                     cameraClient.send(ByteBuffer.wrap(sb.toString().getBytes()));
-                    //                cameraClient.send(new byte[][]{sb.toString().getBytes()});
                 }
                 else if (command.startsWith("BeginVideo "))
                 {
@@ -218,8 +225,8 @@ public class CameraServer implements Runnable {
                 }
                 else if (command.equals("Pic"))
                 {
-                    mSimplePreview.setPreviewCallbackOnce(previewCallback);
 //                    Log.d(TAG, "Requested Pic");
+                    mSimplePreview.setPreviewCallbackOnce(previewSenders.take());
                 }
             }
         }

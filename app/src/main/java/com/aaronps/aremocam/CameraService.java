@@ -23,7 +23,7 @@ public class CameraService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        mSimplePreview = new SimplePreview(1, this);
+        mSimplePreview = new SimplePreview(0, this);
         mCameraServer = new CameraServer(mSimplePreview, 19999);
 
         WindowManager windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
