@@ -1,5 +1,8 @@
 package com.aaronps.aremocam;
 
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
 import android.hardware.Camera;
 import android.util.Log;
 
@@ -63,6 +66,7 @@ public class CameraServer implements Runnable {
                         sschannel = createServer();
                     }
 
+                    Log.d(TAG, "Waiting for client");
                     commandLoop(new CameraClient(sschannel.accept()));
                 }
                 catch (InterruptedException ie)
@@ -114,9 +118,11 @@ public class CameraServer implements Runnable {
         return sschannel;
     }
 
-    private static final byte[] MSG_PIC = "Pic ".getBytes();
+    // little risk, numbers can be 16 digits or less only.
+    private static final byte[] MSG_PIC = "Pic                 \n".getBytes();
 
     private void commandLoop(final CameraClient cameraClient) {
+        Log.d(TAG, "Client connected");
         try
         {
             final ArrayBlockingQueue<PreviewSender> previewSenders = new ArrayBlockingQueue<>(2);
@@ -127,14 +133,13 @@ public class CameraServer implements Runnable {
                             final ByteBufferOutputStream bbos = new ByteBufferOutputStream(bb);
 
                             byte[] mFrame;
-                            int mWidth;
-                            int mHeight;
+                            Rect mRect = new Rect(0,0,0,0);
 
                             @Override
                             public void onPreviewFrame(byte[] bytes, int width, int height) {
                                 mFrame = bytes;
-                                mWidth = width;
-                                mHeight = height;
+                                mRect.right = width;
+                                mRect.bottom = height;
                                 try
                                 {
                                     cameraClient.send(this);
@@ -150,12 +155,19 @@ public class CameraServer implements Runnable {
                             @Override
                             public ByteBuffer prepareData() throws IOException {
                                 bbos.reset();
+
+                                final YuvImage yuv = new YuvImage(mFrame, ImageFormat.NV21, mRect.right, mRect.bottom, null);
                                 try
                                 {
                                     bbos.write(MSG_PIC);
-                                    bbos.writeInt(mFrame.length);
-                                    bbos.write(10);
-                                    bbos.write(mFrame);
+
+                                    yuv.compressToJpeg(mRect, 80, bbos);
+
+                                    final int pos = bb.position();
+                                    final int jpglen = pos - MSG_PIC.length;
+                                    bb.position(4);
+                                    bbos.writeInt(jpglen);
+                                    bb.position(pos);
                                 }
                                 finally
                                 {
