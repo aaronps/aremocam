@@ -12,6 +12,7 @@ import java.nio.channels.Channels;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
@@ -21,21 +22,55 @@ import java.util.concurrent.LinkedBlockingQueue;
 public final class CameraClient implements Runnable, Closeable {
     private static final String TAG = "CameraClient";
 
+    private static final int QUEUE_LIMIT      = 5;
     private static final int RECV_BUFFER_SIZE = 128;
 
-    private final Thread                          mThread;
-    private final SocketChannel                   mSocketChannel;
-    private final LinkedBlockingQueue<ByteBuffer> mSendQueue;
-    private final ByteBuffer                      mReceiveBuffer;
-    private final BufferManager                   mBufferManager;
+    private final Thread                             mThread;
+    private final SocketChannel                      mSocketChannel;
+    private final ArrayBlockingQueue<Sender>         mSendQueue;
+    private final ArrayBlockingQueue<InternalSender> mFreeSenders;
+    private final ByteBuffer                         mReceiveBuffer;
+
+    public interface Sender {
+        ByteBuffer prepareData() throws IOException;
+
+        void afterSend();
+    }
+
+    private class InternalSender implements Sender {
+
+        ByteBuffer mBuffer;
+
+//        InternalSender(){}
+
+        public void setData(ByteBuffer buffer) {
+            mBuffer = buffer;
+        }
+
+        @Override
+        public ByteBuffer prepareData() {
+            return mBuffer;
+        }
+
+        @Override
+        public void afterSend() {
+            mFreeSenders.offer(this);
+        }
+    }
 
 
-    public CameraClient(final SocketChannel socket, final BufferManager bufferManager) {
-        mSendQueue = new LinkedBlockingQueue<>();
+    public CameraClient(final SocketChannel socket) {
+        mSendQueue = new ArrayBlockingQueue<>(QUEUE_LIMIT);
+        mFreeSenders = new ArrayBlockingQueue<>(QUEUE_LIMIT);
+
         mReceiveBuffer = ByteBuffer.allocate(RECV_BUFFER_SIZE);
         mSocketChannel = socket;
-        mBufferManager = bufferManager;
         mThread = new Thread(this);
+
+        for (int n = 0; n < QUEUE_LIMIT; n++)
+        {
+            mFreeSenders.offer(new InternalSender());
+        }
     }
 
     public synchronized void start() {
@@ -81,8 +116,14 @@ public final class CameraClient implements Runnable, Closeable {
      * @param data
      * @return
      */
-    public boolean send(final ByteBuffer data) {
-        return mSendQueue.offer(data);
+    public boolean send(final ByteBuffer data) throws InterruptedException {
+        final InternalSender s = mFreeSenders.take();
+        s.setData(data);
+        return mSendQueue.offer(s);
+    }
+
+    public boolean send(final Sender sender) {
+        return mSendQueue.offer(sender);
     }
 
     @Override
@@ -94,11 +135,9 @@ public final class CameraClient implements Runnable, Closeable {
         {
             while (!thread.isInterrupted())
             {
-                final ByteBuffer bb = mSendQueue.take();
-                // @question being blocking socket, will it always write everything?
-                mSocketChannel.write(bb);
-
-                mBufferManager.release(bb.array());
+                final Sender sender = mSendQueue.take();
+                mSocketChannel.write(sender.prepareData());
+                sender.afterSend();
             }
         }
         catch (InterruptedException e)
@@ -113,7 +152,7 @@ public final class CameraClient implements Runnable, Closeable {
         finally
         {
             Log.d(TAG, "Thread ends");
-            // @todo shall I close mSocketChannel?
+            closeSocket();
 //            closeNoThrow(os); // ensure that at some point will fail when reading because its closed
         }
     }

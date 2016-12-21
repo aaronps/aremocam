@@ -5,10 +5,14 @@ import android.util.Log;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * @todo the client is called CameraClient
@@ -26,6 +30,8 @@ public class CameraServer implements Runnable {
 
     private final SimplePreview mSimplePreview;
     private final int           mTcpPort;
+
+    interface RunnablePreview extends SimplePreview.PreviewCallback, CameraClient.Sender {}
 
     public CameraServer(SimplePreview simplePreview, int tcp_port) {
         mSimplePreview = simplePreview;
@@ -60,7 +66,7 @@ public class CameraServer implements Runnable {
                         sschannel = createServer();
                     }
 
-                    commandLoop(new CameraClient(sschannel.accept(), mSimplePreview));
+                    commandLoop(new CameraClient(sschannel.accept()));
                 }
                 catch (InterruptedException ie)
                 {
@@ -111,31 +117,50 @@ public class CameraServer implements Runnable {
         return sschannel;
     }
 
+    private static final byte[] MSG_PIC = "Pic ".getBytes();
+
     private void commandLoop(final CameraClient cameraClient) {
         try
         {
+            RunnablePreview previewCallback = new RunnablePreview(){
+                final ByteBuffer bb = ByteBuffer.allocate(1*1024*1024);
+                final ByteBufferOutputStream bbos = new ByteBufferOutputStream(bb);
 
-            Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
-                final StringBuilder sb = new StringBuilder(128);
-                final ByteBuffer bb = ByteBuffer.allocate(128);
-                final byte[] bbarray = bb.array();
+                byte[] mFrame;
+                int mWidth;
+                int mHeight;
 
                 @Override
-                public void onPreviewFrame(byte[] bytes, Camera camera) {
-                    sb.setLength(0);
-                    sb.append("Pic ").append(bytes.length).append('\n');
-                    final String headStr = sb.toString(); // @todo could use traction int2string so avoid toString
-                    final int headLen = headStr.length();
-                    headStr.getBytes(0, headLen, bbarray, 0);
-                    bb.position(0);
-                    bb.limit(headLen);
-                    final ByteBuffer head = bb;
+                public void onPreviewFrame(byte[] bytes, int width, int height) {
+                    mFrame = bytes;
+                    mWidth = width;
+                    mHeight = height;
+                    cameraClient.send(this);
+                }
 
-                    // @todo an idea for future avoidance of wrapping would be: SimplePreview finds which pre-made ByteBuffer for this byte[]
-                    final ByteBuffer pic  = ByteBuffer.wrap(bytes);
+                @Override
+                public ByteBuffer prepareData() throws IOException {
+                    bbos.reset();
+                    try
+                    {
+                        bbos.write(MSG_PIC);
+                        bbos.writeInt(mFrame.length);
+                        bbos.write(10);
+                        bbos.write(mFrame);
+                    }
+                    finally
+                    {
+                        mSimplePreview.release(mFrame);
+                    }
 
-                    cameraClient.send(head);
-                    cameraClient.send(pic);
+                    bb.flip();
+                    return bb;
+                }
+
+                @Override
+                public void afterSend() {
+                    // maybe queue myself somewhere
+//                    mSimplePreview.release(mFrame);
                 }
             };
 
@@ -197,6 +222,11 @@ public class CameraServer implements Runnable {
 //                    Log.d(TAG, "Requested Pic");
                 }
             }
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            Log.d(TAG, "Interrupted somewhere", e);
         }
         finally
         {

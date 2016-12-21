@@ -23,6 +23,10 @@ public final class SimplePreview
         implements SurfaceHolder.Callback, Camera.PreviewCallback, BufferManager {
     private static final String TAG = "SimplePreview";
 
+    public interface PreviewCallback {
+        void onPreviewFrame(byte[] frame, int width, int height);
+    }
+
     private final int           mCameraIndex;
     private final SurfaceHolder mSurfaceHolder;
     private final Context       mContext;
@@ -40,7 +44,7 @@ public final class SimplePreview
     private PreviewState mDesiredPreviewState = PREVIEW_OFF;
 
     // @note @optimization This keep separated because it might change every frame and we don't want to renew it
-    private volatile Camera.PreviewCallback mPreviewCallback;
+    private volatile PreviewCallback mPreviewCallback;
 
     private int mPreviewBufferSize = -1;
 
@@ -278,11 +282,11 @@ public final class SimplePreview
 
     @Override
     public void onPreviewFrame(byte[] bytes, Camera camera) {
-        final Camera.PreviewCallback callback = mPreviewCallback;
+        final PreviewCallback callback = mPreviewCallback;
         if ( callback != null )
         {
             mPreviewCallback = null;
-            callback.onPreviewFrame(bytes, camera);
+            callback.onPreviewFrame(bytes, mPreviewState.width, mPreviewState.height);
         }
         else
         {
@@ -291,7 +295,7 @@ public final class SimplePreview
 
     }
 
-    public void setPreviewCallbackOnce(Camera.PreviewCallback previewCallback) {
+    public void setPreviewCallbackOnce(PreviewCallback previewCallback) {
         mPreviewCallback = previewCallback;
     }
 
