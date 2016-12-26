@@ -15,7 +15,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 
 /**
  * @todo the client is called CameraClient
- * @todo When making a client application it's class should be called RemoteCamera
  * <p>
  * <p>
  * C@noteameraServer takes control of the SimplePreview
@@ -41,8 +40,8 @@ public class CameraServer implements Runnable {
     @Override
     public void run() {
         Log.d(TAG, "Run Begin");
-        final FastLoopProtection loopProtection = new FastLoopProtection(LOOP_RESTART_MS);
-        final Thread             thread         = Thread.currentThread();
+        final SimpleLoopBarrier loopBarrier = new SimpleLoopBarrier(LOOP_RESTART_MS);
+        final Thread            thread      = Thread.currentThread();
 
         ServerSocketChannel sschannel = null;
 
@@ -52,7 +51,7 @@ public class CameraServer implements Runnable {
             {
                 try
                 {
-                    loopProtection.sleep();
+                    loopBarrier.check();
 
                     if (!mSimplePreview.acquire())
                     {
@@ -69,12 +68,6 @@ public class CameraServer implements Runnable {
                     Log.d(TAG, "Waiting for client");
                     commandLoop(new CameraClient(sschannel.accept()));
                 }
-                catch (InterruptedException ie)
-                {
-                    Log.d(TAG, "INTERRUPTED", ie);
-                    Thread.currentThread().interrupt();
-                    break;
-                }
                 catch (RuntimeException re) // at least from acquiring camera
                 {
                     Log.d(TAG, "Runtime exception", re);
@@ -88,6 +81,15 @@ public class CameraServer implements Runnable {
                     continue;
                 }
             }
+        }
+        catch (InterruptedException ie)
+        {
+            Log.d(TAG, "INTERRUPTED", ie);
+            Thread.currentThread().interrupt();
+        }
+        catch (Exception e)
+        {
+            Log.d(TAG, "Weird exception", e);
         }
         finally
         {
@@ -133,7 +135,7 @@ public class CameraServer implements Runnable {
                             final ByteBufferOutputStream bbos = new ByteBufferOutputStream(bb);
 
                             byte[] mFrame;
-                            Rect mRect = new Rect(0,0,0,0);
+                            Rect mRect = new Rect(0, 0, 0, 0);
 
                             @Override
                             public void onPreviewFrame(byte[] bytes, int width, int height) {
@@ -163,7 +165,7 @@ public class CameraServer implements Runnable {
 
                                     yuv.compressToJpeg(mRect, 80, bbos);
 
-                                    final int pos = bb.position();
+                                    final int pos    = bb.position();
                                     final int jpglen = pos - MSG_PIC.length;
                                     bb.position(4);
                                     bbos.writeInt(jpglen);

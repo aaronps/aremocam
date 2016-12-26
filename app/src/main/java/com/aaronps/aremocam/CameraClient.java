@@ -71,10 +71,12 @@ public final class CameraClient implements Runnable, Closeable {
     }
 
     public synchronized void close() {
+        Log.d(TAG, "Close beg");
         if (mThread.isAlive())
         {
             try
             {
+                Log.d(TAG, "Close try");
                 mThread.interrupt();
                 mThread.join();
             }
@@ -85,15 +87,22 @@ public final class CameraClient implements Runnable, Closeable {
             }
         }
 
+        Log.d(TAG, "Close close");
+
         closeSocket();
+        Log.d(TAG, "Close clear");
         mSendQueue.clear();
+        Log.d(TAG, "Close end");
     }
 
+    // @todo unsynchronize closeSocket
     private synchronized void closeSocket() {
+        Log.d(TAG, "Close socket beg");
         if (mSocketChannel.isOpen())
         {
             try
             {
+                Log.d(TAG, "Close socket try");
                 mSocketChannel.close();
             }
             catch (IOException ex)
@@ -101,6 +110,7 @@ public final class CameraClient implements Runnable, Closeable {
                 // ignore
             }
         }
+        Log.d(TAG, "Close socket end");
     }
 
     /**
@@ -141,11 +151,13 @@ public final class CameraClient implements Runnable, Closeable {
         catch (IOException e)
         {
             Log.d(TAG, "Thread IOException", e);
+            // @todo closesocket is synchronized and may cause deadlocks if in finally...
+            // so we close here...
+            closeSocket();
         }
         finally
         {
             Log.d(TAG, "Thread ends");
-            closeSocket();
         }
     }
 
